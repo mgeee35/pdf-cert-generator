@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import secrets
+import psycopg2
 from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
@@ -8,15 +9,9 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
 import io
 import openpyxl
-import os
-import uuid
-from typing import List
 
 # FastAPI application
 app = FastAPI()
-
-# Path to the Excel file
-filename = 'certificate_info.xlsx'
 
 # Certificate Data Model
 class CertificateData(BaseModel):
@@ -26,7 +21,18 @@ class CertificateData(BaseModel):
     date: str
     organizer: str
 
-# Generate a unique certificate number
+# PostgreSQL connection
+def connect_db():
+    conn = psycopg2.connect(
+        dbname="skymodcert",   # Database name
+        user="skymod",         # PostgreSQL username
+        password="123456",     # PostgreSQL password
+        host="localhost",      # Connection address
+        port="5432"            # Connection port
+    )
+    return conn
+
+# Generate certificate number
 def generate_unique_token():
     token = secrets.token_hex(16)  # Generate a hexadecimal token
     return token
@@ -64,9 +70,7 @@ def write_on_pdf(output_pdf, token, data):
     with open(output_pdf, "wb") as output_file:
         writer.write(output_file)
 
-    print(f"Token '{token}' has been written to {output_pdf}.")
-
-# Save the certificate data to Excel
+# Save certificate to Excel
 def save_certificate_to_excel(token, link, filename):
     try:
         try:
@@ -75,27 +79,70 @@ def save_certificate_to_excel(token, link, filename):
             workbook = openpyxl.Workbook()
 
         sheet = workbook.active
-        sheet.append([token, link])  # Add the token and link to the Excel sheet
+        sheet.append([token, link])  # Add token and link to Excel
 
         workbook.save(filename)
-        print(f"Data saved to {filename} with a unique token.")
     except Exception as e:
         print(f"An error occurred: {e}")
 
-# Certificate generation function
+# Save certificate to the database
+def save_certificate_to_db(token, data, pdf_data):
+    # Connect to the database
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    # Check if the 'certificates' table exists, and create it if it doesn't
+    create_table_query = '''
+    CREATE TABLE IF NOT EXISTS certificates (
+        id SERIAL PRIMARY KEY,
+        certificate_number VARCHAR(64) UNIQUE NOT NULL,
+        candidate_name VARCHAR(255) NOT NULL,
+        training_name VARCHAR(255) NOT NULL,
+        training_duration VARCHAR(255) NOT NULL,
+        training_date DATE NOT NULL,
+        pdf BYTEA NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    '''
+    cursor.execute(create_table_query)  # Execute the table creation query
+
+    # Insert the certificate data into the 'certificates' table
+    insert_query = '''
+    INSERT INTO certificates (
+        certificate_number, candidate_name, training_name, 
+        training_duration, training_date, pdf
+    ) VALUES (%s, %s, %s, %s, %s, %s)
+    '''
+    cursor.execute(insert_query, (token, data.name, data.type, data.duration, data.date, psycopg2.Binary(pdf_data)))
+
+    # Commit changes to the database
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+
+# Certificate creation function
 @app.post("/generate_certificate/")
 def generate_certificate(data: CertificateData):
     # Generate a unique certificate number
     token = generate_unique_token()
 
-    # Create the PDF output
+    # Generate the PDF output
     lowercase_name = data.name.lower().replace('ü', 'u').replace('ş', 's').replace('ı', 'i').replace('ö', 'o').replace('ğ', 'g').replace('ç', 'c').replace(' ', '_')
     output_pdf = f"./{lowercase_name}.pdf"
     write_on_pdf(output_pdf, token, data)
 
-    # Save the certificate link and token to the Excel file
-    link = f"./{lowercase_name}.pdf"
-    save_certificate_to_excel(token, link, filename)
+    # Read the PDF file as bytes
+    with open(output_pdf, "rb") as pdf_file:
+        pdf_data = pdf_file.read()
 
-    # The certificate has been successfully generated
+    # Save the certificate to the database
+    save_certificate_to_db(token, data, pdf_data)
+
+    # Save the certificate link and token to Excel
+    link = f"./{lowercase_name}.pdf"
+    save_certificate_to_excel(token, link, "certificate_info.xlsx")
+
+    # Certificate has been successfully generated
     return {"message": "Certificate generated successfully", "certificate_link": link, "token": token}
