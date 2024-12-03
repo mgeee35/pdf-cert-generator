@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import secrets
 import psycopg2
@@ -12,6 +13,15 @@ import openpyxl
 
 # FastAPI application
 app = FastAPI()
+
+# CORS Middleware settings
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Requests from all origins are accepted
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all HTTP headers
+)
 
 # Certificate Data Model
 class CertificateData(BaseModel):
@@ -91,7 +101,7 @@ def save_certificate_to_db(token, data, pdf_data):
     conn = connect_db()
     cursor = conn.cursor()
 
-    # Check if the 'certificates' table exists, and create it if it doesn't
+    # Check if the 'certificates' table exists, and create it if not
     create_table_query = '''
     CREATE TABLE IF NOT EXISTS certificates (
         id SERIAL PRIMARY KEY,
