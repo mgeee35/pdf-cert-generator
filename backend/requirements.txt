@@ -1,0 +1,7 @@
+uvicorn
+fastapi
+pydantic
+reportlab
+PyPDF2
+psycopg2
+openpyxl
