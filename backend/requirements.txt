@@ -3,5 +3,5 @@ fastapi
 pydantic
 reportlab
 PyPDF2
-psycopg2
+psycopg2-binary
 openpyxl
